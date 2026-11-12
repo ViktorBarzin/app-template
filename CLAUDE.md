@@ -1,0 +1,1 @@
+/home/wizard/code/app-kit/template/AGENTS.md

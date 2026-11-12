@@ -9,7 +9,7 @@ name: Build and Push
 # made on GitHub are overwritten by the next sync).
 #
 # Per-app setup (infra scripts/offinfra-onboard --keep-workflows does it):
-#   repo variable WOODPECKER_REPO_ID; secrets WOODPECKER_TOKEN,
+#   repo variables WOODPECKER_REPO_ID and FORGEJO_REPO; secrets WOODPECKER_TOKEN,
 #   FORGEJO_GIT_TOKEN, SLACK_WEBHOOK.
 on:
   push:
@@ -47,27 +47,30 @@ jobs:
       TEST_DATABASE_URL: postgres://postgres:ci@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      # The @viktorbarzin/* packages come from npm. Until they are published
-      # (and app-kit's export has written bun.lock), the install below cannot
-      # work; say that plainly instead of failing inside bun.
-      - name: Check the @viktorbarzin packages resolve on npm
+      # The @viktorbarzin/* packages come from Forgejo's npm registry
+      # (bunfig.toml, app-kit ADR-0003). Until they are published there (and
+      # app-kit's export has written bun.lock), the install below cannot work;
+      # say that plainly instead of failing inside bun.
+      - name: Check the @viktorbarzin packages resolve on Forgejo
         run: |
           missing=""
           for spec in $(jq -r '(.dependencies // {}) + (.devDependencies // {})
               | to_entries[] | select(.key | startswith("@viktorbarzin/"))
               | "\(.key)@\(.value)"' package.json); do
-            version=$(npm view "$spec" version 2>/dev/null | tail -n 1)
+            version=$(npm view "$spec" version \
+              --@viktorbarzin:registry=https://forgejo.viktorbarzin.me/api/packages/viktor/npm/ \
+              2>/dev/null | tail -n 1)
             if [ -z "$version" ]; then missing="$missing $spec"; fi
           done
           if [ -n "$missing" ]; then
-            echo "::error title=publish @viktorbarzin packages first::Not on npm:$missing. Publish them from viktor/app-kit (README, 'One-time npm setup'), then refresh this repo with app-kit's scripts/export-template.ts."
+            echo "::error title=publish @viktorbarzin packages first::Not on Forgejo's npm registry:$missing. Publish them from viktor/app-kit (README, 'Releasing'), then refresh this repo with app-kit's scripts/export-template.ts."
             exit 1
           fi
           if [ ! -f bun.lock ]; then
-            echo "::error title=publish @viktorbarzin packages first::bun.lock is missing. Run app-kit's scripts/export-template.ts after the packages are on npm; it writes bun.lock."
+            echo "::error title=publish @viktorbarzin packages first::bun.lock is missing. Run app-kit's scripts/export-template.ts after the packages are published; it writes bun.lock."
             exit 1
           fi
-          echo "all @viktorbarzin packages resolve on npm"
+          echo "all @viktorbarzin packages resolve on Forgejo"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.3
@@ -122,13 +125,16 @@ jobs:
         if: steps.svu.outputs.next != ''
         env:
           FORGEJO_GIT_TOKEN: ${{ secrets.FORGEJO_GIT_TOKEN }}
+          # <owner>/<repo> on Forgejo, set by offinfra-onboard: viktor/<app>,
+          # or the account of the person who owns the app.
+          FORGEJO_REPO: ${{ vars.FORGEJO_REPO || 'viktor/starter' }}
           NEXT: ${{ steps.svu.outputs.next }}
         run: |
           set +e
           git config user.email "ci@viktorbarzin.me"
           git config user.name "starter-ci"
           git tag "$NEXT" 2>/dev/null
-          git push "https://viktor:${FORGEJO_GIT_TOKEN}@forgejo.viktorbarzin.me/viktor/starter.git" "$NEXT" && echo "pushed tag $NEXT to forgejo" || echo "tag push failed (non-blocking)"
+          git push "https://${FORGEJO_REPO%%/*}:${FORGEJO_GIT_TOKEN}@forgejo.viktorbarzin.me/${FORGEJO_REPO}.git" "$NEXT" && echo "pushed tag $NEXT to forgejo" || echo "tag push failed (non-blocking)"
           exit 0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -147,6 +153,8 @@ jobs:
           # Single-manifest images (no provenance/SBOM attestation children) so
           # registry retention can never orphan index children (ADR-0002).
           provenance: false
+          build-args: |
+            SERVICE_VERSION=${{ steps.meta.outputs.sha }}
           tags: |
             ghcr.io/viktorbarzin/starter:${{ steps.meta.outputs.sha }}
             ghcr.io/viktorbarzin/starter:latest
