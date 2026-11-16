@@ -52,15 +52,50 @@ are, except where this section says otherwise.
   older codes stay valid until used or expired, since Cloud cannot revoke
   them. A redeemed old code only makes a Cloud App Guests account, which
   opens no App unless its email is on that App's allow list.
+- **Secrets.** Keep keys and passwords out of the repo and the Project
+  File. Set one from stdin, never as an argument:
+  `printf %s "$VALUE" | cloud secrets set <project> <app> STRIPE_KEY`, or
+  a whole file with `cloud secrets import <project> <app> < .env` (one
+  change, one restart). Over MCP, use `set_secret`. It arrives as an env
+  variable after the App restarts, in about a minute; `cloud secrets list`
+  shows names and status, never values. For a value no person needs, such
+  as a session or signing key, write `SESSION_SECRET: {generate: true}` in
+  the App's `env` in the Project File: Cloud makes 32 random bytes once,
+  keeps them on every apply and never shows them. Read it in
+  `env.server.ts` like any other variable.
+- **Access Tokens for CI.** `cloud tokens create --expires 30d` (after
+  `cloud login`) prints a token for `CLOUD_TOKEN`. Every token expires, 90
+  days at most, and nothing extends it.
 - **No access requests and no bearer tokens.** `/pending` and
   `/admin/requests` redirect. `/api` routes work from the signed-in browser
   only.
 - **Migrations.** `bun run db:generate` writes them to `drizzle/`; commit
   them. Before each deploy Cloud runs `entrypoints/migrate.js` from the image,
   which applies them. Keep them additive (see Database).
+- **Health check.** `cloud new` sets `healthCheckPath: /healthz` in the
+  Project File, and `src/routes/healthz.ts` answers it. Cloud asks it on
+  PORT every 10 s: a Deploy goes live only once it answers 2xx, and an
+  instance that fails it for 60 s is restarted. Keep `/healthz` fast and
+  free of database calls, so a slow database never restarts a working
+  App. `cloud events <project> <app>` lists when the App crashed (with its
+  exit code, or `OOMKilled`), failed the check, or recovered;
+  `cloud projects` names an App that is crashing now.
+- **Network and limits.** No email from the app: Cloud blocks TCP 25,
+  465, 587 and 2525. The app reaches the internet over IPv4 only, from one
+  shared address (`cloud help apps`). A request has 125 seconds to start
+  its answer and a body of at most 100 MiB; a stream needs a message every
+  30 seconds (`cloud help limits`).
 - **Connections.** The pod takes half the database's connection limit: the
   pool, plus one LISTEN connection when realtime is on. On a nano database realtime is off and lists refetch every `app.pollMs`;
   invalidate the query after a write, as `routes/index.tsx` does.
+- **Deploys.** Cloud deploys each push to `master` within seconds (a
+  Forgejo push webhook, which `cloud new` adds). To push without a
+  Deploy, put `[skip cloud]` in the commit message. `cloud deploy
+  <project> <app>` deploys the branch head by hand, `--commit <sha>` one
+  commit; `autoDeploy: false` on the App in the Project File stops push
+  Deploys. `cloud deploy cancel <project> <app> <id>` stops a build, and
+  `cloud deploy-hook <project> <app>` prints a secret URL a POST to which
+  deploys. Keep that URL out of the repo.
 - **Test locally first.** Each push costs build minutes. Before you push,
   start a throwaway Postgres (README, "Run locally"), install the test
   browser once with `bunx playwright install chromium-headless-shell`, and
