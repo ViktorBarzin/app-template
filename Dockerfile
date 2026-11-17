@@ -3,7 +3,8 @@
 #   docker build -t starter:local .
 #
 # Runs the Nitro server by default. The migrate entrypoint runs from the same
-# image as the Deployment's init container, with args ["entrypoints/migrate.js"].
+# image with args ["entrypoints/migrate.js"]: on Cloud as a Job once per
+# Deploy, on the infra path as the Deployment's init container.
 
 # --- build: install with the pinned Bun, then vite build + bundled entrypoints
 FROM oven/bun:1.4.3 AS build
@@ -36,6 +37,15 @@ ENV NODE_ENV=production \
     SERVICE_VERSION=${SERVICE_VERSION}
 COPY --from=build /src/.output/ ./
 COPY --from=build /src/drizzle/ ./drizzle/
+# The distroless image has no shell and no sleep. On Cloud a stopping
+# instance runs the preStop hook `sleep <5 + shutdownDelaySeconds>` so
+# requests in flight finish before SIGTERM; without a sleep binary the hook
+# fails and SIGTERM comes at once. `cloud run <p> <app> -- sh -c '...'`
+# needs a shell. Static busybox (pinned by digest) answers as the applet its
+# link is named after.
+COPY --from=docker.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 /bin/busybox /usr/local/bin/busybox
+RUN ["/usr/local/bin/busybox", "ln", "-s", "busybox", "/usr/local/bin/sleep"]
+RUN ["/usr/local/bin/busybox", "ln", "-s", "busybox", "/usr/local/bin/sh"]
 USER 10001:10001
 EXPOSE 3000 9090
 CMD ["run", "server/index.mjs"]

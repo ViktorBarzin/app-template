@@ -88,8 +88,19 @@ are, except where this section says otherwise.
   failed and the last 20 lines of its build; `cloud deploys log <project>
   <app> <deploy-id>` prints the whole build.
 - **Migrations.** `bun run db:generate` writes them to `drizzle/`; commit
-  them. Before each deploy Cloud runs `entrypoints/migrate.js` from the image,
-  which applies them. Keep them additive (see Database).
+  them. Once per Deploy, before the new version starts, Cloud runs
+  `entrypoints/migrate.js` from the image as a Job, which applies them. If
+  it fails, the Deploy fails, the version before keeps serving, and
+  `cloud deploys log <project> <app> <deploy-id>` ends with its output.
+  Keep them additive (see Database).
+- **One-off jobs.** `cloud run <project> <app> -- <command>` runs a
+  command once with the live version's image, env and secrets, prints its
+  output and exits with its exit code; `cloud jobs <project> <app>` lists
+  them. The command runs with no shell and at most 1 hour, one at a time
+  per Project, and cannot call an internal App. Bundle a script as
+  `migrate.ts` is (`build:entrypoints`), and it runs as
+  `cloud run <project> <app> -- bun entrypoints/<name>.js`. It
+  opens 1 database connection that the Plan does not count.
 - **Health check.** `cloud new` sets `healthCheckPath: /healthz` in the
   Project File, and `src/routes/healthz.ts` answers it. Cloud asks it on
   PORT every 10 s: a Deploy goes live only once it answers 2xx, and an
@@ -97,12 +108,25 @@ are, except where this section says otherwise.
   free of database calls, so a slow database never restarts a working
   App. `cloud events <project> <app>` lists when the App crashed (with its
   exit code, or `OOMKilled`), failed the check, or recovered;
-  `cloud projects` names an App that is crashing now.
+  `cloud projects` names an App that is crashing now. To hear about it by
+  email or signed webhook, add a channel:
+  `cloud notifications channels add email <address>` or
+  `... add webhook <url>` (`cloud help notifications`).
+- **Instances.** `instances: 2` (or 3) on the App in the Project File
+  runs that many copies, each counted against the Budget at the App's
+  Size. Each request goes to one of them, so keep state in Postgres,
+  never in memory. Each reads its id in `CLOUD_INSTANCE_ID`, and
+  `cloud logs` shows its last 5 characters on each line.
 - **Network and limits.** No email from the app: Cloud blocks TCP 25,
   465, 587 and 2525. The app reaches the internet over IPv4 only, from one
   shared address (`cloud help apps`). A request has 125 seconds to start
   its answer and a body of at most 100 MiB; a stream needs a message every
   30 seconds (`cloud help limits`).
+- **Background work.** A pg-boss worker or a cron job runs from this
+  App's image as a `worker` or `cron` Service in the Project File, with an
+  argv `command` such as `[bun, entrypoints/worker.js]` and its pool sized
+  to `CLOUD_DATABASE_POOL_SIZE`. Read "Workers and cron jobs on Cloud" in
+  app-kit's `docs/stack.md` before you add one.
 - **Connections.** The pod takes half the database's connection limit: the
   pool, plus one LISTEN connection when realtime is on. On a nano database realtime is off and lists refetch every `app.pollMs`;
   invalidate the query after a write, as `routes/index.tsx` does.
@@ -299,10 +323,16 @@ To opt out for good, set `telemetry.enabled: false` in `src/app.config.ts`.
 
 - Connection budget: 5 per pod on a shared primary. The pool takes 4
   (`APP_POOL_MAX`), the realtime LISTEN connection 1; the migrate init
-  container uses 1 more while it runs. On Cloud the pod gets half of
-  `CLOUD_DATABASE_CONNECTION_LIMIT` (`connectionBudget()` in
-  `env.server.ts`), and realtime only when that is at least 2. More replicas
-  or a CronJob multiply this, so ask before adding either.
+  container uses 1 more while it runs. On Cloud the pool is
+  `CLOUD_DATABASE_POOL_SIZE` plus the LISTEN connection
+  (`connectionBudget()` in `env.server.ts`). Cloud counts each instance
+  twice (during a rollout the old pods keep their connections until they
+  stop), plus each worker and cron on the database, and refuses a Plan
+  that does not fit (`cloud help limits`). A small Postgres holds 2
+  instances, a worker and a cron at pool 1. Without it the pod gets half of
+  `CLOUD_DATABASE_CONNECTION_LIMIT`. More replicas or a CronJob multiply
+  this, so ask before adding either. On Cloud a worker or cron job opens
+  `CLOUD_DATABASE_POOL_SIZE` connections (see On Cloud).
 - Migrations are additive: expand in one release, contract in a later one, so
   the previous image stays a working rollback.
 - The same rule covers server functions. A tab opened before a deploy keeps
