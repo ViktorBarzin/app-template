@@ -52,6 +52,15 @@ are, except where this section says otherwise.
   `requireMember` answers 401: serve what they need on routes that need no
   user. To call an internal App from this one, read its URL from
   `CLOUD_URL_<NAME>` on the server.
+- **Dependency updates.** If Renovate is on for the repo (`cloud new`
+  turns it on), it opens one pull request a week on `renovate/all` with
+  every update, majors too. Cloud builds it without deploying it and sets
+  the commit status `cloud/build`; Renovate merges it once every status
+  on it is success, and the merge deploys like any push. Leave that branch to
+  Renovate. Keep `bun run check`, the typecheck and the build green, since a
+  failing build holds every update back. List a package in `ignoreDeps` in
+  `renovate.json` to hold it back; `cloud renovate disable <project> <app>`
+  turns Renovate off.
 - **Two 401s.** A 401 with `sign_in_required` comes from Cloud's edge (a
   private App and no sign-in); a 401 with `unauthorized` comes from this
   app's own code (`requireMember` with no user).
@@ -140,6 +149,10 @@ are, except where this section says otherwise.
   realtime is off (no pool size and a connection limit below 4), lists
   refetch every `app.pollMs`; invalidate the query after a write, as
   `routes/index.tsx` does.
+- **Deleting.** `cloud projects delete <project>` stops the Project; for
+  7 days `cloud projects restore <project>` brings it back with its
+  database, then Cloud deletes it for good (`--purge` does that at once).
+  Never delete a Project to retry a failed apply: apply the file again.
 - **Deploys.** Cloud deploys each push to `master` within seconds (a
   Forgejo push webhook, which `cloud new` adds). To push without a
   Deploy, put `[skip cloud]` in the commit message. `cloud deploy
