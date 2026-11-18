@@ -158,6 +158,14 @@ are, except where this section says otherwise.
   realtime is off (no pool size and a connection limit below 4), lists
   refetch every `app.pollMs`; invalidate the query after a write, as
   `routes/index.tsx` does.
+- **Backups.** Cloud dumps the Postgres every night and keeps the dumps
+  14 days. `cloud pg backup` takes one now and `cloud pg backups` lists
+  them; `cloud pg restore ... --backup <id> --into <new>` restores one
+  into a new Postgres, never into this one; `cloud pg export ... -o
+  db.dump` writes a `pg_dump` to a file. `cloud pg rotate` gives the
+  Postgres a new password and restarts the App with it. The template
+  reads `DATABASE_URL` at start, so it needs no change (`cloud help
+  postgres`).
 - **Deleting.** `cloud projects delete <project>` stops the Project; for
   7 days `cloud projects restore <project>` brings it back with its
   database, then Cloud deletes it for good (`--purge` does that at once).
